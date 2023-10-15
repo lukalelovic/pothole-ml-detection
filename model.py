@@ -39,4 +39,4 @@ def detect_potholes(input_image_path, output_image_path, model, img_width=256, i
 		output_image = cv2.rectangle(output_image, (0, 0), (img_width, img_height), (255, 0, 0), thickness=5)  # red rectangle
 
 	# save the output image
-	cv2.imwrite(output_image_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
+	cv2.imwrite(output_image_path, output_image)

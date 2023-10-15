@@ -21,7 +21,7 @@ print("y_test shape:", y_test.shape)
 model = build_model()
 
 # train the model
-model.fit(X_train, y_train, epochs=10, batch_size=32, validation_split=0.2)
+model.fit(X_train, y_train, epochs=5, batch_size=32, validation_split=0.2)
 
 # input and output image paths
 input_image_path = input('Image to predict: ')
@@ -32,6 +32,6 @@ detect_potholes(input_image_path, output_image_path, model)
 
 # display the output image
 output_image = cv2.imread(output_image_path)
-plt.imshow(cv2.cvtColor(output_image, cv2.COLOR_BGR2RGB))
+plt.imshow(output_image)
 plt.axis('off')
 plt.show()
