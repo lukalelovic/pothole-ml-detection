@@ -1,48 +1,68 @@
+# model code
 import tensorflow as tf
-from tensorflow import keras
-from keras import layers
+from preprocess import normalize
+from keras import layers, models
 import numpy as np
 import cv2
 
-# define the CNN model
-def build_model(img_width=256, img_height=256):
-  model = keras.Sequential([
-  	layers.Conv2D(32, (3, 3), activation='relu', input_shape=(img_height, img_width, 3)),
-  	layers.MaxPooling2D((2, 2)),
-  	layers.Conv2D(64, (3, 3), activation='relu'),
-  	layers.MaxPooling2D((2, 2)),
-  	layers.Flatten(),
-  	layers.Dense(128, activation='relu'),
-  	layers.Dense(1, activation='sigmoid')  # binary classification
-  ])
+def double_conv_block(x, n_filters):
+  x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
+  x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
+  return x
 
-  # compile the model
-  model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-  return model
+def downsample_block(x, n_filters):
+  # Conv2D twice with ReLU activation
+  f = double_conv_block(x, n_filters)
+
+  p = layers.MaxPool2D(2)(f)
+  p = layers.Dropout(0.3)(p)
+  return f, p
+
+def upsample_block(x, conv_features, n_filters):
+  # upsample
+  x = layers.Conv2DTranspose(n_filters, 3, 2, padding="same")(x)
+  # concatenate
+  x = layers.concatenate([x, conv_features])
+  # dropout
+  x = layers.Dropout(0.3)(x)
+  # Conv2D twice with ReLU activation
+  x = double_conv_block(x, n_filters)
+  return x
+
+# define U-Net model
+def build_model(size=(128, 128, 3)):
+  inputs = layers.Input(shape=size)
+
+  # encoder: contracting path - downsample
+  f1, p1 = downsample_block(inputs, 64)
+  f2, p2 = downsample_block(p1, 128)
+  f3, p3 = downsample_block(p2, 256)
+  f4, p4 = downsample_block(p3, 512)
+
+  # bottleneck
+  bottleneck = double_conv_block(p4, 1024)
+
+  # decoder: expanding path - upsample
+  u6 = upsample_block(bottleneck, f4, 512)
+  u7 = upsample_block(u6, f3, 256)
+  u8 = upsample_block(u7, f2, 128)
+  u9 = upsample_block(u8, f1, 64)
+
+  # outputs
+  outputs = layers.Conv2D(3, 1, padding="same", activation = "softmax")(u9)
+
+  # unet model with Keras Functional API
+  unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
+
+  return unet_model
 
 # function to perform pothole detection and create an output image
-def detect_potholes(input_image_path, output_image_path, model, img_width=256, img_height=256):
+def detect_potholes(model, image_path):
   # load and preprocess the input image
-  input_image = cv2.imread(input_image_path)
+  img = cv2.imread(image_path)
+  img = cv2.resize(img, (128, 128))
+  img = img / 255.0
 
-  # create an output image with segmentation highlighting
-  output_image = np.copy(input_image) 
-  input_image = cv2.resize(input_image, (img_width, img_height))
-  input_image = input_image / 255.0  # normalize pixel values to [0, 1] 
-
-  # perform pothole detection
-  prediction = model.predict(np.expand_dims(input_image, axis=0))
-  print(prediction)
-
-  color = (0, 0, 255) # red color
-
-  # find contours in prediction
-  contours, _ = cv2.findContours(np.uint8(prediction), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-  # draw rectangles around detected objects
-  for contour in contours:
-    x, y, w, h = cv2.boundingRect(contour)
-    cv2.rectangle(output_image, (x, y), (x + w, y + h), color, 2) # draw a red rectangle
-		
-  # save the output image
-  cv2.imwrite(output_image_path, output_image)
+  # create output image with segmentation highlighting
+  prediction = model.predict(img)
+  return prediction.squeeze()  # remove batch dimension
