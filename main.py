@@ -1,61 +1,100 @@
-from preprocess import preprocess_data
-from model import build_model, detect_potholes
-import matplotlib.pyplot as plt
+from model import build_unet, calcLoss
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import load_model
 from keras.optimizers import Adam
-import tensorflow as tf
-import cv2
+from tensorflow.keras.metrics import MeanIoU
+from preprocess import readImages
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+import os
 
-train_data_dir = "./cracks-and-potholes-in-road/"
+train_data_dir = "./cracks-and-potholes-in-road"
+model_path = "./pothole_segmentation_model.h5"
 
 # load and preprocess training/testing data
 print('Preprocessing...')
-X_train, y_train = preprocess_data(train_data_dir)
 
-y_train = tf.argmax(y_train, axis=-1)
+# load images and masks
+img_dataset = readImages('./cracks-and-potholes-in-road/images/*.jpg')
+mask_dataset = readImages('./cracks-and-potholes-in-road/masks/*.png', True)
 
-# check the shapes of the datasets
-print('Done!')
-print("X_train shape:", X_train.shape)
-print("y_train shape:", y_train.shape)
+print("Image shape:", img_dataset.shape)
+print("Mask shape:", mask_dataset.shape)
+print("Image max:", np.max(img_dataset))
+print("Mask labels:", np.unique(mask_dataset))
 
-model = build_model()
+img_dataset = img_dataset/255. # normalize
+mask_dataset = mask_dataset/255. # rescale
 
-model.compile(optimizer=Adam(lr=1e-4), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+X_train, X_test, y_train, y_test = train_test_split(img_dataset, mask_dataset, test_size = 0.20, random_state = 42)
 
-# get model parameters
-print(model.summary())
-
-# train the model
-hist = model.fit(X_train, y_train, epochs=1, batch_size=8, steps_per_epoch=100, verbose=1, validation_split=0.2)
-
-# save the model
-model.save('pothole_segmentation_model.h5')
-
-# get model loss
-plt.plot(hist.history['loss'], label='Training Loss')
-plt.plot(hist.history['val_loss'], label='Validation Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.legend()
+# sanity check, view few masks
+image_number = random.randint(0, len(X_train)-1)
+plt.figure(figsize=(12, 6))
+plt.subplot(121)
+plt.imshow(X_train[image_number,:,:,0], cmap='gray')
+plt.subplot(122)
+plt.imshow(y_train[image_number,:,:,0], cmap='gray')
 plt.show()
 
-# input and output image paths
-input_image_path = input('Image to predict: ')
-output_image_path = input('Output Name: ')
+if os.path.exists(model_path):
+  # load the existing model from the .h5 file
+  model = load_model(model_path)
+  print("Model loaded from", model_path)
+else:
+  IMG_HEIGHT = img_dataset.shape[1]
+  IMG_WIDTH  = img_dataset.shape[2]
+  IMG_CHANNELS = img_dataset.shape[3]
+  
+  input_shape = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS)
 
-# detect potholes and create the output image
-prediction = detect_potholes(model, input_image_path)
+  model = build_unet(input_shape=input_shape, n_classes=1)
 
-# Visualize the original image and the segmentation mask
-original_img = cv2.im_read(input_image_path)
-plt.figure(figsize=(8, 4))
+  model.compile(optimizer=Adam(learning_rate=1e-3), loss='binary_crossentropy', metrics=['accuracy'])
 
-plt.subplot(1, 2, 1)
-plt.imshow(original_img)
-plt.title('Original')
+  # get model parameters
+  print(model.summary())
 
-plt.subplot(1, 2, 2)
-plt.imshow(prediction, cmap='viridis')  # adjust the colormap based on your needs
-plt.title('Segmentation')
+  NUM_EPOCHS = 32
+  BATCH_SIZE = 32
+  STEPS_PER_EPOCH = 25
+
+  # train the model
+  hist = model.fit(X_train, y_train, batch_size=BATCH_SIZE, verbose=1, epochs=NUM_EPOCHS, steps_per_epoch=STEPS_PER_EPOCH, validation_data=(X_test, y_test), shuffle=False)
+
+  # save the model
+  model.save('pothole_segmentation_model.h5')
+
+  calcLoss(hist)
+
+# IOU
+y_pred=model.predict(X_test)
+y_pred_thresholded = y_pred > 0.5
+
+n_classes = 2
+IOU_keras = MeanIoU(num_classes=n_classes)  
+IOU_keras.update_state(y_pred_thresholded, y_test)
+print("Mean IoU =", IOU_keras.result().numpy())
+
+threshold = 0.5
+test_img_number = random.randint(0, len(X_test)-1)
+test_img = X_test[test_img_number]
+ground_truth=y_test[test_img_number]
+test_img_input=np.expand_dims(test_img, 0)
+print(test_img_input.shape)
+prediction = (model.predict(test_img_input)[0,:,:,0] > 0.5).astype(np.uint8)
+print(prediction.shape)
+
+plt.figure(figsize=(16, 8))
+plt.subplot(231)
+plt.title('Testing Image')
+plt.imshow(test_img[:,:,0], cmap='gray')
+plt.subplot(232)
+plt.title('Testing Label')
+plt.imshow(ground_truth[:,:,0], cmap='gray')
+plt.subplot(233)
+plt.title('Prediction on test image')
+plt.imshow(prediction, cmap='gray')
 
 plt.show()

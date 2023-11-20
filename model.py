@@ -1,68 +1,80 @@
 # model code
 import tensorflow as tf
-from preprocess import normalize
-from keras import layers, models
-import numpy as np
-import cv2
+from keras.models import Model
+from keras.layers import Input, Conv2D, Conv2DTranspose, BatchNormalization
+from keras.layers import Activation, MaxPool2D, Concatenate
+import matplotlib.pyplot as plt
 
-def double_conv_block(x, n_filters):
-  x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
-  x = layers.Conv2D(n_filters, 3, padding = "same", activation = "relu", kernel_initializer = "he_normal")(x)
+def conv_block(input, num_filters):
+  x = Conv2D(num_filters, 3, padding="same")(input)
+  x = BatchNormalization()(x)   #Not in the original network. 
+  x = Activation("relu")(x)
+  
+  x = Conv2D(num_filters, 3, padding="same")(x)
+  x = BatchNormalization()(x)  #Not in the original network
+  x = Activation("relu")(x)
+  
   return x
 
-def downsample_block(x, n_filters):
-  # Conv2D twice with ReLU activation
-  f = double_conv_block(x, n_filters)
+# Encoder block: Conv block followed by maxpooling
+def encoder_block(input, num_filters):
+  x = conv_block(input, num_filters)
+  p = MaxPool2D((2, 2))(x)
+  return x, p   
 
-  p = layers.MaxPool2D(2)(f)
-  p = layers.Dropout(0.3)(p)
-  return f, p
-
-def upsample_block(x, conv_features, n_filters):
-  # upsample
-  x = layers.Conv2DTranspose(n_filters, 3, 2, padding="same")(x)
-  # concatenate
-  x = layers.concatenate([x, conv_features])
-  # dropout
-  x = layers.Dropout(0.3)(x)
-  # Conv2D twice with ReLU activation
-  x = double_conv_block(x, n_filters)
+# Decoder block: skip features gets input from encoder for concatenation
+def decoder_block(input, skip_features, num_filters):
+  x = Conv2DTranspose(num_filters, (2, 2), strides=2, padding="same")(input)
+  x = Concatenate()([x, skip_features])
+  x = conv_block(x, num_filters)
   return x
 
-# define U-Net model
-def build_model(size=(128, 128, 3)):
-  inputs = layers.Input(shape=size)
+# Build Unet using the blocks
+def build_unet(input_shape, n_classes):
+  inputs = Input(input_shape)
+  
+  s1, p1 = encoder_block(inputs, 64)
+  s2, p2 = encoder_block(p1, 128)
+  s3, p3 = encoder_block(p2, 256)
+  s4, p4 = encoder_block(p3, 512)
+  
+  b1 = conv_block(p4, 1024) #Bridge
+  
+  d1 = decoder_block(b1, s4, 512)
+  d2 = decoder_block(d1, s3, 256)
+  d3 = decoder_block(d2, s2, 128)
+  d4 = decoder_block(d3, s1, 64)
+  
+  if n_classes == 1: # Binary
+    activation = 'sigmoid'
+  else:
+    activation = 'softmax'
 
-  # encoder: contracting path - downsample
-  f1, p1 = downsample_block(inputs, 64)
-  f2, p2 = downsample_block(p1, 128)
-  f3, p3 = downsample_block(p2, 256)
-  f4, p4 = downsample_block(p3, 512)
+  outputs = Conv2D(n_classes, 1, padding="same", activation=activation)(d4)  #Change the activation based on n_classes
+  print(activation)
 
-  # bottleneck
-  bottleneck = double_conv_block(p4, 1024)
+  model = Model(inputs, outputs, name="U-Net")
+  return model
 
-  # decoder: expanding path - upsample
-  u6 = upsample_block(bottleneck, f4, 512)
-  u7 = upsample_block(u6, f3, 256)
-  u8 = upsample_block(u7, f2, 128)
-  u9 = upsample_block(u8, f1, 64)
+def calcLoss(hist):
+  # get model loss
+  loss = hist.history['loss']
+  val_loss = hist.history['val_loss']
+  epochs = range(1, len(loss) + 1)
+  plt.plot(epochs, loss, 'y', label='Training loss')
+  plt.plot(epochs, val_loss, 'r', label='Validation loss')
+  plt.title('Training and validation loss')
+  plt.xlabel('Epochs')
+  plt.ylabel('Loss')
+  plt.legend()
+  plt.show()
 
-  # outputs
-  outputs = layers.Conv2D(3, 1, padding="same", activation = "softmax")(u9)
-
-  # unet model with Keras Functional API
-  unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
-
-  return unet_model
-
-# function to perform pothole detection and create an output image
-def detect_potholes(model, image_path):
-  # load and preprocess the input image
-  img = cv2.imread(image_path)
-  img = cv2.resize(img, (128, 128))
-  img = img / 255.0
-
-  # create output image with segmentation highlighting
-  prediction = model.predict(img)
-  return prediction.squeeze()  # remove batch dimension
+  acc = hist.history['accuracy']
+  val_acc = hist.history['val_accuracy']
+  plt.plot(epochs, acc, 'y', label='Training acc')
+  plt.plot(epochs, val_acc, 'r', label='Validation acc')
+  plt.title('Training and validation accuracy')
+  plt.xlabel('Epochs')
+  plt.ylabel('Accuracy')
+  plt.legend()
+  plt.show()
