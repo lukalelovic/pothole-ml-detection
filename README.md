@@ -1,5 +1,5 @@
 # Pothole ML Detection
-Machine learning image classifier for road potholes.
+Machine learning image classifier for road potholes. Part of data mining class (CSI 4352) project.
 
 ## Motivation
 The basis behind this project comes from an interest in urban planning and making improvements to cities and the ways in which we interact with them. If this could be automated (i.e. through machine learning), government departments could be better equipped with tools and information to improve their cities.
