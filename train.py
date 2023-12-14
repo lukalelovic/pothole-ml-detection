@@ -1,23 +1,22 @@
-from model import build_unet, calcLoss
+from model import build_unet, calcLoss, confusionMatrix
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import load_model
 from keras.optimizers import Adam
 from tensorflow.keras.metrics import MeanIoU
-from preprocess import readImages
+from tensorflow.keras.callbacks import EarlyStopping
+from preprocess import preprocess_data
 import numpy as np
 import matplotlib.pyplot as plt
 import random
 import os
 
-train_data_dir = "./pothole-dataset"
 model_path = "./pothole_segmentation_model.h5"
 
 # load and preprocess training/testing data
 print('Preprocessing...')
 
 # load images and masks
-img_dataset = readImages('./cracks-and-potholes-in-road/images/*.jpg')
-mask_dataset = readImages('./cracks-and-potholes-in-road/masks/*.png', True)
+img_dataset, mask_dataset = preprocess_data('./pothole-dataset')
 
 print("Image shape:", img_dataset.shape)
 print("Mask shape:", mask_dataset.shape)
@@ -25,18 +24,18 @@ print("Image max:", np.max(img_dataset))
 print("Mask labels:", np.unique(mask_dataset))
 
 img_dataset = img_dataset/255. # normalize
-mask_dataset = mask_dataset/255. # rescale
+mask_dataset = mask_dataset/255.
 
 X_train, X_test, y_train, y_test = train_test_split(img_dataset, mask_dataset, test_size = 0.20, random_state = 42)
 
 # sanity check
-# image_number = random.randint(0, len(X_train)-1)
-# plt.figure(figsize=(12, 6))
-# plt.subplot(121)
-# plt.imshow(X_train[image_number,:,:,0], cmap='gray')
-# plt.subplot(122)
-# plt.imshow(y_train[image_number,:,:,0], cmap='gray')
-# plt.show()
+image_number = random.randint(0, len(X_train)-1)
+plt.figure(figsize=(12, 6))
+plt.subplot(121)
+plt.imshow(X_train[image_number,:,:,0], cmap='gray')
+plt.subplot(122)
+plt.imshow(y_train[image_number,:,:,0], cmap='gray')
+plt.show()
 
 if os.path.exists(model_path):
   # load the existing model from the .h5 file
@@ -56,17 +55,21 @@ else:
   # get model parameters
   print(model.summary())
 
-  NUM_EPOCHS = 32
+  NUM_EPOCHS = 64
   BATCH_SIZE = 32
-  STEPS_PER_EPOCH = 25
+  STEPS_PER_EPOCH = 32
 
   # train the model
-  hist = model.fit(X_train, y_train, batch_size=BATCH_SIZE, verbose=1, epochs=NUM_EPOCHS, steps_per_epoch=STEPS_PER_EPOCH, validation_data=(X_test, y_test), shuffle=False)
+  early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+  hist = model.fit(X_train, y_train, batch_size=BATCH_SIZE, verbose=1, epochs=NUM_EPOCHS, steps_per_epoch=STEPS_PER_EPOCH, 
+                   validation_data=(X_test, y_test), shuffle=False, callbacks=[early_stopping])
 
   # save the model
   model.save('pothole_segmentation_model.h5')
 
   calcLoss(hist)
+
+confusionMatrix(model, X_train, y_train)
 
 # IOU
 y_pred=model.predict(X_test)

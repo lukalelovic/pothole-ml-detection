@@ -17,7 +17,7 @@ image = None
 if choice1 == 'y':
   img_name = input('Path to image: ')
 
-  image = cv2.imread(img_name)
+  image = cv2.imread(img_name, 0)
 
   if image is None:
     print('Image not found:', img_name)
@@ -73,18 +73,17 @@ else:
     print('Saved!')
     save = ''
   
-  image = cv2.imread(img_name)
+  image = cv2.imread(img_name, 0)
 
 image = cv2.resize(image, (128, 128))
 
 # perform preprocessing on image
-grayscale_img = cv2.imread(img_name, 0)
-grayscale_img = cv2.resize(grayscale_img, (128, 128))
-grayscale_img = grayscale_img / 255.
+image = cv2.resize(image, (128, 128))
+image = image / 255.
 
 model = load_model('pothole_segmentation_model.h5')
 
-test_img = np.expand_dims(grayscale_img, 0)
+test_img = np.expand_dims(image, 0)
 prediction = (model.predict(test_img)[0,:,:,0] > 0.5).astype(np.uint8)
 
 plt.figure(figsize=(16, 8))
